@@ -7,3 +7,15 @@ dist/
 build/
 .DS_Store
 *.parquet
+.env
+.env.*
+__pypackages__/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.ipynb_checkpoints/
+.vscode/
+.idea/
