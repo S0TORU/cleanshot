@@ -26,3 +26,5 @@ cleanshot samples/example_small.csv example_clean.parquet
 - Keep PRs small and clear.
 - Describe the motivation and what changed.
 - Include test steps if you ran anything.
+- CI must pass before merge (`.github/workflows/ci.yml`).
+- Use `RELEASE_CHECKLIST.md` before publishing a release.

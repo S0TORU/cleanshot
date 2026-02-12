@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Tests (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install package + test deps
+        run: |
+          python -m pip install --upgrade pip wheel
+          python -m pip install -e .
+          python -m pip install pytest
+
+      - name: Run tests
+        run: python -m pytest -q
+
+  package:
+    name: Build package
+    runs-on: ubuntu-latest
+    needs: tests
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip wheel build twine
+          python -m build
+          python -m twine check dist/*
+
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*
+          if-no-files-found: error
+
+  smoke:
+    name: Installed CLI smoke tests
+    runs-on: ubuntu-latest
+    needs: package
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Download built wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Install wheel
+        run: python -m pip install dist/*.whl
+
+      - name: Run CLI smoke checks
+        run: |
+          set -euo pipefail
+          tmpdir="$(mktemp -d)"
+          cleanshot samples/dirty.csv "$tmpdir/basic.parquet" --no-verbose
+          cleanshot samples/dirty.csv "$tmpdir/ml.parquet" \
+            --preset ml_ready \
+            --outlier-mode percentile \
+            --outlier-pct 0.01,0.99 \
+            --scale standardize \
+            --encode onehot \
+            --encode-max-categories 10 \
+            --schema-out "$tmpdir/schema.json" \
+            --report-out "$tmpdir/report.md" \
+            --no-verbose \
+            --no-dedup
+          cleanshot samples/dirty.csv "$tmpdir/split.parquet" \
+            --split 0.6,0.2,0.2 \
+            --no-verbose \
+            --no-dedup
+          mkdir -p "$tmpdir/sensors"
+          printf 'device_id,timestamp,accel\n1,2024-01-01T00:00:00,0.1\n' > "$tmpdir/sensors/imu.csv"
+          printf 'device_id,timestamp,lat\n1,2024-01-01T00:00:01,42.0\n' > "$tmpdir/sensors/gps.csv"
+          cleanshot \
+            --fusion-source "imu=$tmpdir/sensors/imu.csv" \
+            --fusion-source "gps=$tmpdir/sensors/gps.csv" \
+            --fusion-id-col device_id \
+            --fusion-time-col timestamp \
+            --fusion-time-tolerance 2s \
+            "$tmpdir/fused.parquet" \
+            --no-verbose
+          test -f "$tmpdir/basic.parquet"
+          test -f "$tmpdir/ml.parquet"
+          test -f "$tmpdir/schema.json"
+          test -f "$tmpdir/report.md"
+          test -f "$tmpdir/split_train.parquet"
+          test -f "$tmpdir/split_val.parquet"
+          test -f "$tmpdir/split_test.parquet"
+          test -f "$tmpdir/fused.parquet"
